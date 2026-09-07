@@ -1,0 +1,21 @@
+# Caddyfile — va en /etc/caddy/Caddyfile del droplet.
+#
+# Cambia el dominio por el tuyo. Caddy pide el certificado a Let's
+# Encrypt solo, lo renueva solo, y hace de proxy para el WebSocket sin
+# configuración extra: reverse_proxy detecta el Upgrade y lo pasa tal
+# cual.
+#
+# El TLS lo necesitas sí o sí: sin HTTPS el navegador no entrega el
+# micrófono, así que sin esto no hay voz.
+
+notdiscord.tudominio.cl {
+	encode zstd gzip
+
+	# El servidor escucha solo en loopback, así que el puerto 8080
+	# no queda expuesto a internet. Todo entra por Caddy.
+	reverse_proxy 127.0.0.1:8080
+
+	log {
+		output file /var/log/caddy/notdiscord.log
+	}
+}

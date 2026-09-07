@@ -1,0 +1,30 @@
+# systemd unit — va en /etc/systemd/system/notdiscord.service
+#
+# DynamicUser crea un usuario temporal sin privilegios para el proceso,
+# y StateDirectory le da /var/lib/notdiscord con los permisos correctos
+# sin que tengas que crear usuarios ni hacer chown a mano.
+
+[Unit]
+Description=notdiscord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/notdiscord -addr 127.0.0.1:8080 -db /var/lib/notdiscord/notdiscord.db
+Restart=always
+RestartSec=2
+
+DynamicUser=yes
+StateDirectory=notdiscord
+
+# Endurecimiento: el proceso no puede escribir fuera de su
+# StateDirectory ni ganar privilegios nuevos.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
