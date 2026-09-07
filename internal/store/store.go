@@ -11,14 +11,17 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // registra el driver "sqlite3"
+	_ "modernc.org/sqlite" // registra el driver "sqlite"
 
 	"github.com/iaaaanb/notdiscord/internal/protocol"
 )
 
-// driverName está aislado aquí: para cambiar a modernc.org/sqlite basta
-// reemplazar el import de arriba y poner "sqlite" en esta constante.
-const driverName = "sqlite3"
+// modernc.org/sqlite es SQLite traducido a Go puro: no usa cgo. Eso
+// significa que `CGO_ENABLED=0 GOOS=linux go build` produce un binario
+// estático que copias al servidor y corre, sin gcc ni librerías del
+// sistema. Con mattn/go-sqlite3 (que es un binding a la librería en C)
+// habría que compilar en el servidor o pelear con cross-compiling.
+const driverName = "sqlite"
 
 const schema = `
 CREATE TABLE IF NOT EXISTS channels (
@@ -44,12 +47,32 @@ type Store struct {
 
 // Open abre (o crea) la base y deja el esquema listo.
 func Open(path string) (*Store, error) {
-	// WAL permite lecturas concurrentes con escrituras; foreign_keys
-	// viene apagado por defecto en SQLite y hay que pedirlo.
-	db, err := sql.Open(driverName, path+"?_journal_mode=WAL&_foreign_keys=on")
+	db, err := sql.Open(driverName, path)
 	if err != nil {
 		return nil, fmt.Errorf("abrir %s: %w", path, err)
 	}
+
+	// Una sola conexión. El hub es una goroutine única, así que ya
+	// estaba todo serializado; hacerlo explícito además evita los
+	// "database is locked" y hace que los PRAGMA de abajo valgan
+	// siempre (foreign_keys es por conexión, no por base).
+	db.SetMaxOpenConns(1)
+
+	// WAL permite lecturas concurrentes con escrituras; foreign_keys
+	// viene apagado por defecto en SQLite y hay que pedirlo. Se aplican
+	// como SQL y no en la cadena de conexión porque cada driver usa una
+	// sintaxis distinta para eso.
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("%s: %w", pragma, err)
+		}
+	}
+
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("crear esquema: %w", err)
