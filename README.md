@@ -7,6 +7,12 @@ binary** with the web client embedded in it — `scp` it to a server and run it.
 
 [![CI](https://github.com/iaaaanb/notdiscord/actions/workflows/ci.yml/badge.svg)](https://github.com/iaaaanb/notdiscord/actions/workflows/ci.yml)
 
+![Two browsers side by side: a message crossing instantly, a new channel appearing in both sidebars, and both users joining a voice channel](docs/media/demo.gif)
+
+*Two real clients, side by side — not a mockup. Text goes through the server;
+the audio in the voice part goes directly between the two browsers. Recorded by
+[a script](scripts/record-demo/) that fails if the voice never actually connects.*
+
 > The UI and the code comments are in Spanish; this README is in English.
 
 ## What it does
@@ -52,6 +58,7 @@ internal/chat/      the hub (state, broadcast, voice routing) and per-connection
 internal/store/     SQLite: channels and message history
 web/                the client (HTML/CSS/JS), embedded with go:embed
 deploy/             Caddyfile, systemd unit, deploy script
+scripts/record-demo/  Playwright script that regenerates the GIF above
 ```
 
 ## Design notes
