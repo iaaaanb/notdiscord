@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,7 +67,13 @@ func main() {
 		}
 	}()
 
-	log.Printf("escuchando en http://localhost%s", *addr)
+	// El flag viene como ":8080" o como "127.0.0.1:8080"; en el primer
+	// caso le agregamos el host para que el link quede clickeable.
+	shown := *addr
+	if strings.HasPrefix(shown, ":") {
+		shown = "localhost" + shown
+	}
+	log.Printf("escuchando en http://%s", shown)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
