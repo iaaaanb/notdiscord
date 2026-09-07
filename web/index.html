@@ -3,23 +3,38 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>notdiscord · M0</title>
+  <title>notdiscord</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main>
-    <header>
+  <!-- Pantalla de entrada -->
+  <div id="join" class="join">
+    <form id="join-form">
       <h1>notdiscord</h1>
-      <span id="status" class="status" data-state="connecting">conectando…</span>
-    </header>
-
-    <ul id="log" aria-live="polite"></ul>
-
-    <form id="form">
-      <input id="input" type="text" placeholder="Escribe algo y el servidor lo devuelve" autocomplete="off" autofocus>
-      <button type="submit">Enviar</button>
+      <p class="hint">Elige un nick para entrar al canal</p>
+      <input id="nick" type="text" maxlength="32" placeholder="tu nick" autocomplete="off" autofocus>
+      <button type="submit">Entrar</button>
+      <p id="join-error" class="error" role="alert"></p>
     </form>
-  </main>
+  </div>
+
+  <!-- Chat -->
+  <div id="chat" class="chat" hidden>
+    <aside>
+      <h2># general</h2>
+      <p class="hint">Online</p>
+      <ul id="online"></ul>
+      <span id="status" class="status" data-state="open">conectado</span>
+    </aside>
+    <main>
+      <ul id="log" aria-live="polite"></ul>
+      <form id="msg-form">
+        <input id="msg" type="text" maxlength="2000" placeholder="Mensaje a # general" autocomplete="off">
+        <button type="submit">Enviar</button>
+      </form>
+    </main>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

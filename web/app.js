@@ -1,37 +1,108 @@
-// M0: cliente mínimo de prueba. Envía texto plano y muestra el echo.
-// En M1 esto pasa a hablar el protocolo JSON ({type, data}).
+// Cliente M1: habla el protocolo JSON {type, data} con el servidor.
 
-const log = document.getElementById("log");
-const form = document.getElementById("form");
-const input = document.getElementById("input");
-const status = document.getElementById("status");
+const $ = (id) => document.getElementById(id);
+const joinView = $("join"), chatView = $("chat");
+const joinForm = $("join-form"), nickInput = $("nick"), joinError = $("join-error");
+const msgForm = $("msg-form"), msgInput = $("msg");
+const log = $("log"), onlineList = $("online"), status = $("status");
+
+let myNick = null;
 
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const ws = new WebSocket(`${proto}//${location.host}/ws`);
 
-function setStatus(state, text) {
-  status.dataset.state = state;
-  status.textContent = text;
-}
+const send = (type, data) => ws.send(JSON.stringify({ type, data }));
 
-function addLine(kind, text) {
-  const li = document.createElement("li");
-  li.className = kind;
-  li.textContent = text;
-  log.appendChild(li);
-  log.scrollTop = log.scrollHeight;
-}
-
-ws.addEventListener("open", () => setStatus("open", "conectado"));
-ws.addEventListener("close", () => setStatus("closed", "desconectado"));
-ws.addEventListener("error", () => setStatus("closed", "error de conexión"));
-ws.addEventListener("message", (ev) => addLine("recv", `← ${ev.data}`));
-
-form.addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  const text = input.value.trim();
-  if (!text || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(text);
-  addLine("sent", `→ ${text}`);
-  input.value = "";
+ws.addEventListener("close", () => {
+  status.dataset.state = "closed";
+  status.textContent = "desconectado — recarga la página";
 });
+
+ws.addEventListener("message", (ev) => {
+  let env;
+  try { env = JSON.parse(ev.data); } catch { return; }
+  const d = env.data ?? {};
+
+  switch (env.type) {
+    case "nick_ok":
+      myNick = d.nick;
+      joinView.hidden = true;
+      chatView.hidden = false;
+      renderOnline(d.online);
+      system(`entraste como ${d.nick}`);
+      msgInput.focus();
+      break;
+
+    case "message":
+      addMessage(d);
+      break;
+
+    case "user_joined":
+      if (d.nick !== myNick) system(`${d.nick} entró`);
+      renderOnline(d.online);
+      break;
+
+    case "user_left":
+      system(`${d.nick} salió`);
+      renderOnline(d.online);
+      break;
+
+    case "error":
+      if (!myNick) joinError.textContent = d.message;
+      else system(`error: ${d.message}`);
+      break;
+  }
+});
+
+joinForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  joinError.textContent = "";
+  const nick = nickInput.value.trim();
+  if (nick) send("set_nick", { nick });
+});
+
+msgForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const content = msgInput.value.trim();
+  if (!content || ws.readyState !== WebSocket.OPEN) return;
+  send("send_message", { content });
+  msgInput.value = "";
+});
+
+function addMessage({ author, content, sent_at }) {
+  const li = document.createElement("li");
+  li.className = "msg" + (author === myNick ? " mine" : "");
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const time = new Date(sent_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  meta.textContent = `${author} · ${time}`;
+
+  const body = document.createElement("div");
+  body.textContent = content; // textContent: sin riesgo de inyectar HTML
+
+  li.append(meta, body);
+  appendToLog(li);
+}
+
+function system(text) {
+  const li = document.createElement("li");
+  li.className = "system";
+  li.textContent = text;
+  appendToLog(li);
+}
+
+function appendToLog(li) {
+  // Autoscroll solo si ya estabas abajo (no interrumpe lectura del historial)
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.appendChild(li);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function renderOnline(nicks) {
+  onlineList.replaceChildren(...nicks.map((n) => {
+    const li = document.createElement("li");
+    li.textContent = n + (n === myNick ? " (tú)" : "");
+    return li;
+  }));
+}
