@@ -2,8 +2,10 @@
 //
 // Todo mensaje es un Envelope: {"type": "...", "data": {...}}.
 //
-// Cliente → servidor: set_nick, send_message
-// Servidor → cliente: nick_ok, message, user_joined, user_left, error
+// Cliente → servidor: set_nick, send_message, join_channel, create_channel
+// Servidor → cliente: nick_ok, message, user_joined, user_left,
+//
+//	channel_list, channel_joined, error
 package protocol
 
 import (
@@ -39,29 +41,43 @@ type SetNick struct {
 	Nick string `json:"nick"`
 }
 
-// SendMessage envía un mensaje al canal (global en M1).
+// SendMessage envía un mensaje al canal en el que está el cliente.
 type SendMessage struct {
 	Content string `json:"content"`
 }
 
-// --- servidor → cliente ---
-
-// NickOK confirma el registro del nick e incluye quiénes están online.
-type NickOK struct {
-	Nick   string   `json:"nick"`
-	Online []string `json:"online"`
+// JoinChannel pide cambiarse a un canal existente.
+type JoinChannel struct {
+	Name string `json:"name"`
 }
 
-// Message es un mensaje de chat difundido a todos.
+// CreateChannel pide crear un canal nuevo (y te cambia a él).
+type CreateChannel struct {
+	Name string `json:"name"`
+}
+
+// --- servidor → cliente ---
+
+// NickOK confirma el registro del nick. Incluye el estado inicial:
+// quiénes están online, qué canales existen y en cuál quedaste.
+type NickOK struct {
+	Nick     string   `json:"nick"`
+	Online   []string `json:"online"`
+	Channels []string `json:"channels"`
+	Channel  string   `json:"channel"`
+}
+
+// Message es un mensaje de chat difundido al canal correspondiente.
 type Message struct {
+	Channel string    `json:"channel"`
 	Author  string    `json:"author"`
 	Content string    `json:"content"`
 	SentAt  time.Time `json:"sent_at"`
 }
 
 // NewMessage crea un Message con la hora actual del servidor.
-func NewMessage(author, content string) Message {
-	return Message{Author: author, Content: content, SentAt: time.Now().UTC()}
+func NewMessage(channel, author, content string) Message {
+	return Message{Channel: channel, Author: author, Content: content, SentAt: time.Now().UTC()}
 }
 
 // Presence anuncia que alguien entró o salió (user_joined / user_left)
@@ -69,6 +85,16 @@ func NewMessage(author, content string) Message {
 type Presence struct {
 	Nick   string   `json:"nick"`
 	Online []string `json:"online"`
+}
+
+// ChannelList es la lista completa de canales (se reenvía al crear uno).
+type ChannelList struct {
+	Channels []string `json:"channels"`
+}
+
+// ChannelJoined confirma que el cliente quedó mirando otro canal.
+type ChannelJoined struct {
+	Name string `json:"name"`
 }
 
 // ErrorMsg informa un error al cliente sin cortar la conexión.

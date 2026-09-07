@@ -11,7 +11,7 @@
   <div id="join" class="join">
     <form id="join-form">
       <h1>notdiscord</h1>
-      <p class="hint">Elige un nick para entrar al canal</p>
+      <p class="hint">Elige un nick para entrar</p>
       <input id="nick" type="text" maxlength="32" placeholder="tu nick" autocomplete="off" autofocus>
       <button type="submit">Entrar</button>
       <p id="join-error" class="error" role="alert"></p>
@@ -21,15 +21,21 @@
   <!-- Chat -->
   <div id="chat" class="chat" hidden>
     <aside>
-      <h2># general</h2>
+      <p class="hint">Canales</p>
+      <ul id="channels"></ul>
+      <form id="chan-form">
+        <input id="chan" type="text" maxlength="32" placeholder="nuevo canal" autocomplete="off">
+        <button type="submit" aria-label="Crear canal">+</button>
+      </form>
       <p class="hint">Online</p>
       <ul id="online"></ul>
       <span id="status" class="status" data-state="open">conectado</span>
     </aside>
     <main>
+      <header><h2 id="channel-title"># general</h2></header>
       <ul id="log" aria-live="polite"></ul>
       <form id="msg-form">
-        <input id="msg" type="text" maxlength="2000" placeholder="Mensaje a # general" autocomplete="off">
+        <input id="msg" type="text" maxlength="2000" placeholder="Mensaje" autocomplete="off">
         <button type="submit">Enviar</button>
       </form>
     </main>

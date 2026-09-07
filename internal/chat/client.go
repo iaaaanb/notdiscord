@@ -22,10 +22,11 @@ const (
 // El campo nick solo lo escribe el hub (goroutine única), y send es el
 // puente hub → writePump.
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
-	nick string // "" hasta que el hub acepte un set_nick
+	hub     *Hub
+	conn    *websocket.Conn
+	send    chan []byte
+	nick    string // "" hasta que el hub acepte un set_nick
+	channel string // canal que el cliente está mirando; lo asigna el hub
 }
 
 // ServeWS actualiza la petición HTTP a WebSocket y ata el cliente al hub.

@@ -1,12 +1,14 @@
 // Package chat implementa el hub central y las conexiones de clientes.
 //
 // El diseño sigue el patrón clásico de chat en Go: el hub corre en una
-// sola goroutine y es el ÚNICO que toca el estado (clientes, nicks).
-// Todo le llega por channels, así que no hay mutexes ni data races.
+// sola goroutine y es el ÚNICO que toca el estado (clientes, nicks,
+// canales). Todo le llega por channels, así que no hay mutexes ni
+// data races.
 package chat
 
 import (
 	"log"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -15,9 +17,14 @@ import (
 )
 
 const (
-	maxNickLen    = 32
-	maxContentLen = 2000
+	maxNickLen     = 32
+	maxContentLen  = 2000
+	defaultChannel = "general"
 )
+
+// Los nombres de canal se normalizan a minúsculas con guiones,
+// estilo discord: "Mi Canal" → "mi-canal".
+var channelNameRe = regexp.MustCompile(`^[a-z0-9\p{L}][a-z0-9\p{L}_-]{0,31}$`)
 
 // inbound es un mensaje parseado que un cliente le manda al hub.
 type inbound struct {
@@ -32,8 +39,9 @@ type Hub struct {
 	inbound    chan inbound
 
 	// Estado privado del hub: solo Run() lo toca.
-	clients map[*Client]bool
-	nicks   map[string]*Client
+	clients  map[*Client]bool
+	nicks    map[string]*Client
+	channels map[string]bool
 }
 
 func NewHub() *Hub {
@@ -43,6 +51,7 @@ func NewHub() *Hub {
 		inbound:    make(chan inbound),
 		clients:    make(map[*Client]bool),
 		nicks:      make(map[string]*Client),
+		channels:   map[string]bool{defaultChannel: true},
 	}
 }
 
@@ -78,7 +87,7 @@ func (h *Hub) drop(c *Client, announce bool) {
 		h.broadcast(protocol.Marshal("user_left", protocol.Presence{
 			Nick:   c.nick,
 			Online: h.online(),
-		}))
+		}), "")
 	}
 }
 
@@ -86,17 +95,27 @@ func (h *Hub) handle(c *Client, env protocol.Envelope) {
 	switch env.Type {
 	case "set_nick":
 		var req protocol.SetNick
-		if !decode(c, env, &req) {
-			return
+		if decode(c, env, &req) {
+			h.setNick(c, req.Nick)
 		}
-		h.setNick(c, req.Nick)
 
 	case "send_message":
 		var req protocol.SendMessage
-		if !decode(c, env, &req) {
-			return
+		if decode(c, env, &req) {
+			h.message(c, req.Content)
 		}
-		h.message(c, req.Content)
+
+	case "join_channel":
+		var req protocol.JoinChannel
+		if decode(c, env, &req) {
+			h.joinChannel(c, req.Name)
+		}
+
+	case "create_channel":
+		var req protocol.CreateChannel
+		if decode(c, env, &req) {
+			h.createChannel(c, req.Name)
+		}
 
 	default:
 		c.sendError("unknown_type", "tipo de mensaje desconocido: "+env.Type)
@@ -118,17 +137,20 @@ func (h *Hub) setNick(c *Client, nick string) {
 	}
 
 	c.nick = nick
+	c.channel = defaultChannel
 	h.nicks[nick] = c
 	log.Printf("chat: %q entró (%d online)", nick, len(h.nicks))
 
 	c.trySend(protocol.Marshal("nick_ok", protocol.NickOK{
-		Nick:   nick,
-		Online: h.online(),
+		Nick:     nick,
+		Online:   h.online(),
+		Channels: h.channelNames(),
+		Channel:  c.channel,
 	}))
 	h.broadcast(protocol.Marshal("user_joined", protocol.Presence{
 		Nick:   nick,
 		Online: h.online(),
-	}))
+	}), "")
 }
 
 func (h *Hub) message(c *Client, content string) {
@@ -144,16 +166,60 @@ func (h *Hub) message(c *Client, content string) {
 		c.sendError("too_long", "mensaje demasiado largo (máx. 2000 caracteres)")
 		return
 	}
-	h.broadcast(protocol.Marshal("message", protocol.NewMessage(c.nick, content)))
+	msg := protocol.NewMessage(c.channel, c.nick, content)
+	h.broadcast(protocol.Marshal("message", msg), c.channel)
 }
 
-// broadcast envía data a todos los clientes con nick. Si el buffer de un
-// cliente está lleno (consumidor lento), se le desconecta en vez de
-// bloquear al hub entero.
-func (h *Hub) broadcast(data []byte) {
+func (h *Hub) joinChannel(c *Client, name string) {
+	if c.nick == "" {
+		c.sendError("no_nick", "elige un nick antes de cambiar de canal")
+		return
+	}
+	name = NormalizeChannel(name)
+	if !h.channels[name] {
+		c.sendError("no_channel", "el canal #"+name+" no existe")
+		return
+	}
+	c.channel = name
+	c.trySend(protocol.Marshal("channel_joined", protocol.ChannelJoined{Name: name}))
+}
+
+func (h *Hub) createChannel(c *Client, name string) {
+	if c.nick == "" {
+		c.sendError("no_nick", "elige un nick antes de crear canales")
+		return
+	}
+	name = NormalizeChannel(name)
+	if !channelNameRe.MatchString(name) {
+		c.sendError("bad_channel", "nombre inválido: usa letras, números, - o _ (máx. 32)")
+		return
+	}
+	if h.channels[name] {
+		c.sendError("channel_exists", "el canal #"+name+" ya existe")
+		return
+	}
+
+	h.channels[name] = true
+	log.Printf("chat: %q creó el canal #%s", c.nick, name)
+
+	// Todos ven el canal nuevo; el creador además se cambia a él.
+	h.broadcast(protocol.Marshal("channel_list", protocol.ChannelList{
+		Channels: h.channelNames(),
+	}), "")
+	c.channel = name
+	c.trySend(protocol.Marshal("channel_joined", protocol.ChannelJoined{Name: name}))
+}
+
+// broadcast envía data a los clientes con nick. Si channel != "", solo a
+// quienes están mirando ese canal. Si el buffer de un cliente está lleno
+// (consumidor lento), se le desconecta en vez de bloquear al hub entero.
+func (h *Hub) broadcast(data []byte, channel string) {
 	for c := range h.clients {
 		if c.nick == "" {
 			continue // aún no entra al chat
+		}
+		if channel != "" && c.channel != channel {
+			continue
 		}
 		select {
 		case c.send <- data:
@@ -172,4 +238,24 @@ func (h *Hub) online() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// channelNames devuelve los canales ordenados, con "general" primero.
+func (h *Hub) channelNames() []string {
+	out := make([]string, 0, len(h.channels))
+	for n := range h.channels {
+		if n != defaultChannel {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return append([]string{defaultChannel}, out...)
+}
+
+// NormalizeChannel convierte un nombre libre al formato de canal:
+// minúsculas y espacios como guiones. "Mi Canal" → "mi-canal".
+func NormalizeChannel(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.TrimPrefix(name, "#")
+	return strings.ReplaceAll(name, " ", "-")
 }

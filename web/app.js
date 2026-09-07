@@ -1,12 +1,16 @@
-// Cliente M1: habla el protocolo JSON {type, data} con el servidor.
+// Cliente M2: protocolo JSON con canales múltiples.
 
 const $ = (id) => document.getElementById(id);
 const joinView = $("join"), chatView = $("chat");
 const joinForm = $("join-form"), nickInput = $("nick"), joinError = $("join-error");
 const msgForm = $("msg-form"), msgInput = $("msg");
-const log = $("log"), onlineList = $("online"), status = $("status");
+const chanForm = $("chan-form"), chanInput = $("chan");
+const log = $("log"), onlineList = $("online"), channelList = $("channels");
+const status = $("status"), channelTitle = $("channel-title");
 
 let myNick = null;
+let currentChannel = null;
+let channels = [];
 
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const ws = new WebSocket(`${proto}//${location.host}/ws`);
@@ -26,15 +30,25 @@ ws.addEventListener("message", (ev) => {
   switch (env.type) {
     case "nick_ok":
       myNick = d.nick;
+      channels = d.channels;
       joinView.hidden = true;
       chatView.hidden = false;
+      setChannel(d.channel);
       renderOnline(d.online);
-      system(`entraste como ${d.nick}`);
       msgInput.focus();
       break;
 
     case "message":
-      addMessage(d);
+      if (d.channel === currentChannel) addMessage(d);
+      break;
+
+    case "channel_list":
+      channels = d.channels;
+      renderChannels();
+      break;
+
+    case "channel_joined":
+      setChannel(d.name);
       break;
 
     case "user_joined":
@@ -68,6 +82,39 @@ msgForm.addEventListener("submit", (ev) => {
   send("send_message", { content });
   msgInput.value = "";
 });
+
+chanForm.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const name = chanInput.value.trim();
+  if (!name) return;
+  send("create_channel", { name });
+  chanInput.value = "";
+});
+
+function setChannel(name) {
+  currentChannel = name;
+  channelTitle.textContent = `# ${name}`;
+  msgInput.placeholder = `Mensaje a # ${name}`;
+  log.replaceChildren(); // sin historial todavía: llega en M3
+  system(`estás en # ${name}`);
+  renderChannels();
+  msgInput.focus();
+}
+
+function renderChannels() {
+  channelList.replaceChildren(...channels.map((name) => {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `# ${name}`;
+    btn.className = name === currentChannel ? "chan current" : "chan";
+    btn.addEventListener("click", () => {
+      if (name !== currentChannel) send("join_channel", { name });
+    });
+    li.appendChild(btn);
+    return li;
+  }));
+}
 
 function addMessage({ author, content, sent_at }) {
   const li = document.createElement("li");
