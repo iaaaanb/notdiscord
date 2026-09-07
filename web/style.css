@@ -1,0 +1,84 @@
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#fafaf7, #1c1c1e);
+  --fg: light-dark(#26251f, #e7e5dc);
+  --muted: light-dark(#8a887e, #8f8d84);
+  --line: light-dark(#e2e0d6, #34343a);
+  --accent: #4f8a6d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+}
+
+main {
+  width: min(640px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+h1 { font-size: 1.2rem; margin: 0; font-weight: 600; }
+
+.status { font-size: 0.85rem; color: var(--muted); }
+.status[data-state="open"] { color: var(--accent); }
+.status[data-state="closed"] { color: #c25b4e; }
+
+#log {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#log .sent { color: var(--muted); }
+#log .recv { color: var(--fg); }
+
+form { display: flex; gap: 8px; }
+
+input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+}
+
+input:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  padding: 10px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}

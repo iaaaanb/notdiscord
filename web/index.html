@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>notdiscord · M0</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>notdiscord</h1>
+      <span id="status" class="status" data-state="connecting">conectando…</span>
+    </header>
+
+    <ul id="log" aria-live="polite"></ul>
+
+    <form id="form">
+      <input id="input" type="text" placeholder="Escribe algo y el servidor lo devuelve" autocomplete="off" autofocus>
+      <button type="submit">Enviar</button>
+    </form>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
