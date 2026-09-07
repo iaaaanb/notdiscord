@@ -1,0 +1,10 @@
+# Binario compilado
+/notdiscord
+
+# Base de datos local: la crea el servidor al arrancar
+*.db
+*.db-shm
+*.db-wal
+
+# Snapshots de trabajo
+*.tar.gz
