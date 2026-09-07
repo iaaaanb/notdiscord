@@ -1,0 +1,12 @@
+{
+  "name": "notdiscord-record-demo",
+  "private": true,
+  "type": "module",
+  "description": "Graba docs/media/demo.gif manejando dos navegadores con Playwright.",
+  "scripts": {
+    "record": "./record.sh"
+  },
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}
