@@ -97,6 +97,13 @@ type ChannelJoined struct {
 	Name string `json:"name"`
 }
 
+// History trae los últimos mensajes de un canal (del más antiguo al
+// más nuevo). Se envía justo después de nick_ok y de channel_joined.
+type History struct {
+	Channel  string    `json:"channel"`
+	Messages []Message `json:"messages"`
+}
+
 // ErrorMsg informa un error al cliente sin cortar la conexión.
 type ErrorMsg struct {
 	Code    string `json:"code"`

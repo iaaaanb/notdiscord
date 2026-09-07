@@ -42,6 +42,15 @@ ws.addEventListener("message", (ev) => {
       if (d.channel === currentChannel) addMessage(d);
       break;
 
+    case "history":
+      if (d.channel !== currentChannel) break;
+      log.replaceChildren();
+      d.messages.forEach(addMessage);
+      system(d.messages.length
+        ? `estás en # ${d.channel} — últimos ${d.messages.length} mensajes`
+        : `estás en # ${d.channel} — sin mensajes aún`);
+      break;
+
     case "channel_list":
       channels = d.channels;
       renderChannels();
@@ -95,8 +104,7 @@ function setChannel(name) {
   currentChannel = name;
   channelTitle.textContent = `# ${name}`;
   msgInput.placeholder = `Mensaje a # ${name}`;
-  log.replaceChildren(); // sin historial todavía: llega en M3
-  system(`estás en # ${name}`);
+  log.replaceChildren(); // history llega enseguida y pinta el historial
   renderChannels();
   msgInput.focus();
 }

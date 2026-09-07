@@ -1,7 +1,7 @@
 // Command server arranca el notdiscord.
 //
-// M1: chat global en tiempo real. El hub central mantiene el estado y
-// cada conexión WebSocket habla el protocolo JSON de internal/protocol.
+// M3: chat con canales y persistencia en SQLite. Los canales y el
+// historial de mensajes sobreviven reinicios del servidor.
 package main
 
 import (
@@ -11,14 +11,28 @@ import (
 	"time"
 
 	"github.com/iaaaanb/notdiscord/internal/chat"
+	"github.com/iaaaanb/notdiscord/internal/store"
 	"github.com/iaaaanb/notdiscord/web"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "dirección de escucha, ej. :8080")
+	dbPath := flag.String("db", "notdiscord.db", "ruta del archivo SQLite")
 	flag.Parse()
 
-	hub := chat.NewHub()
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		log.Fatalf("store: %v", err)
+	}
+	defer st.Close()
+
+	names, err := st.ChannelNames()
+	if err != nil {
+		log.Fatalf("store: cargando canales: %v", err)
+	}
+	log.Printf("store: %s (%d canales)", *dbPath, len(names))
+
+	hub := chat.NewHub(st, names)
 	go hub.Run()
 
 	mux := http.NewServeMux()

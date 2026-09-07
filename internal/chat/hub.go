@@ -14,12 +14,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/iaaaanb/notdiscord/internal/protocol"
+	"github.com/iaaaanb/notdiscord/internal/store"
 )
 
 const (
 	maxNickLen     = 32
 	maxContentLen  = 2000
 	defaultChannel = "general"
+	historyLimit   = 50
 )
 
 // Los nombres de canal se normalizan a minúsculas con guiones,
@@ -42,16 +44,23 @@ type Hub struct {
 	clients  map[*Client]bool
 	nicks    map[string]*Client
 	channels map[string]bool
+	store    *store.Store
 }
 
-func NewHub() *Hub {
+// NewHub crea el hub con los canales cargados desde la base.
+func NewHub(st *store.Store, channelNames []string) *Hub {
+	channels := map[string]bool{defaultChannel: true}
+	for _, n := range channelNames {
+		channels[n] = true
+	}
 	return &Hub{
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		inbound:    make(chan inbound),
 		clients:    make(map[*Client]bool),
 		nicks:      make(map[string]*Client),
-		channels:   map[string]bool{defaultChannel: true},
+		channels:   channels,
+		store:      st,
 	}
 }
 
@@ -147,6 +156,7 @@ func (h *Hub) setNick(c *Client, nick string) {
 		Channels: h.channelNames(),
 		Channel:  c.channel,
 	}))
+	h.sendHistory(c)
 	h.broadcast(protocol.Marshal("user_joined", protocol.Presence{
 		Nick:   nick,
 		Online: h.online(),
@@ -167,6 +177,11 @@ func (h *Hub) message(c *Client, content string) {
 		return
 	}
 	msg := protocol.NewMessage(c.channel, c.nick, content)
+	if err := h.store.SaveMessage(msg); err != nil {
+		// El chat sigue funcionando aunque falle el disco; solo se
+		// pierde ese mensaje del historial.
+		log.Printf("store: guardando mensaje: %v", err)
+	}
 	h.broadcast(protocol.Marshal("message", msg), c.channel)
 }
 
@@ -182,6 +197,7 @@ func (h *Hub) joinChannel(c *Client, name string) {
 	}
 	c.channel = name
 	c.trySend(protocol.Marshal("channel_joined", protocol.ChannelJoined{Name: name}))
+	h.sendHistory(c)
 }
 
 func (h *Hub) createChannel(c *Client, name string) {
@@ -199,6 +215,11 @@ func (h *Hub) createChannel(c *Client, name string) {
 		return
 	}
 
+	if err := h.store.CreateChannel(name); err != nil {
+		log.Printf("store: creando canal: %v", err)
+		c.sendError("store_error", "no pude guardar el canal, intenta de nuevo")
+		return
+	}
 	h.channels[name] = true
 	log.Printf("chat: %q creó el canal #%s", c.nick, name)
 
@@ -208,6 +229,23 @@ func (h *Hub) createChannel(c *Client, name string) {
 	}), "")
 	c.channel = name
 	c.trySend(protocol.Marshal("channel_joined", protocol.ChannelJoined{Name: name}))
+	h.sendHistory(c)
+}
+
+// sendHistory manda al cliente los últimos mensajes de su canal actual.
+func (h *Hub) sendHistory(c *Client) {
+	msgs, err := h.store.History(c.channel, historyLimit)
+	if err != nil {
+		log.Printf("store: leyendo historial de #%s: %v", c.channel, err)
+		return
+	}
+	if msgs == nil {
+		msgs = []protocol.Message{} // JSON: [] en vez de null
+	}
+	c.trySend(protocol.Marshal("history", protocol.History{
+		Channel:  c.channel,
+		Messages: msgs,
+	}))
 }
 
 // broadcast envía data a los clientes con nick. Si channel != "", solo a
