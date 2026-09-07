@@ -32,6 +32,11 @@ type Client struct {
 	channel string // canal que el cliente está mirando; lo asigna el hub
 	session string // token para reclamar el nick al reconectar
 
+	// Canal de voz en el que está, "" si no está en ninguno. Es
+	// independiente de channel: puedes seguir hablando en #general
+	// mientras lees #tareas, como en discord.
+	voiceChannel string
+
 	closeCode   websocket.StatusCode
 	closeReason string
 }

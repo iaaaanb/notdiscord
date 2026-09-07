@@ -64,17 +64,41 @@ type CreateChannel struct {
 	Name string `json:"name"`
 }
 
+// Signal transporta la negociación WebRTC entre dos clientes.
+//
+// El servidor NO mira Payload: solo lo rutea. Ahí van las ofertas,
+// respuestas y candidatos ICE que el navegador genera. Esto es todo lo
+// que significa "señalización": ser la central telefónica que conecta a
+// dos pares para que después hablen directo.
+//
+// Cliente → servidor usa To; servidor → cliente usa From.
+type Signal struct {
+	To      string          `json:"to,omitempty"`
+	From    string          `json:"from,omitempty"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 // --- servidor → cliente ---
 
 // NickOK confirma el registro del nick. Incluye el estado inicial:
-// quiénes están online, qué canales existen y en cuál quedaste.
+// quiénes están online, qué canales existen, en cuál quedaste y quién
+// está en voz en cada canal.
 // Session es el token que el cliente debe guardar para reconectar.
 type NickOK struct {
-	Nick     string   `json:"nick"`
-	Session  string   `json:"session"`
-	Online   []string `json:"online"`
-	Channels []string `json:"channels"`
-	Channel  string   `json:"channel"`
+	Nick     string              `json:"nick"`
+	Session  string              `json:"session"`
+	Online   []string            `json:"online"`
+	Channels []string            `json:"channels"`
+	Channel  string              `json:"channel"`
+	Voice    map[string][]string `json:"voice"`
+}
+
+// VoiceState lista quiénes están en el canal de voz de Channel. Se
+// difunde a todos (no solo a los del canal) para que la barra lateral
+// pueda mostrar el contador de cada canal.
+type VoiceState struct {
+	Channel string   `json:"channel"`
+	Members []string `json:"members"`
 }
 
 // Message es un mensaje de chat difundido al canal correspondiente.

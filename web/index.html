@@ -27,6 +27,14 @@
         <input id="chan" type="text" maxlength="32" placeholder="nuevo canal" autocomplete="off">
         <button type="submit" aria-label="Crear canal">+</button>
       </form>
+      <p class="hint" id="voice-title">Voz</p>
+      <ul id="voice-members"></ul>
+      <p id="voice-elsewhere" class="hint elsewhere" hidden></p>
+      <div class="voice-controls">
+        <button id="voice-btn" type="button">Entrar a voz</button>
+        <button id="mute-btn" type="button" hidden>Silenciar</button>
+      </div>
+
       <p class="hint">Online</p>
       <ul id="online"></ul>
       <p class="status-row">

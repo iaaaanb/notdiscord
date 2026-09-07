@@ -156,3 +156,45 @@ main header h2 { margin: 0; font-size: 1rem; }
 .msg .body { overflow-wrap: anywhere; }
 
 input:disabled, button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- M5: voz --- */
+#voice-members { list-style: none; margin: 0; padding: 0; font-size: 0.9rem; }
+#voice-members:empty { display: none; }
+
+.voice-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  color: var(--muted);
+}
+/* punto que se enciende cuando la persona habla */
+.voice-member::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+  transition: background 0.1s, box-shadow 0.1s;
+}
+.voice-member.speaking { color: var(--fg); }
+.voice-member.speaking::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.voice-member.muted::before { background: var(--danger); }
+
+.voice-controls { display: flex; gap: 6px; }
+.voice-controls button { padding: 6px 10px; font-size: 0.82rem; flex: 1; }
+.voice-controls button.leave { background: var(--danger); }
+
+.elsewhere { color: var(--danger); }
+
+/* contador de gente en voz junto al nombre del canal */
+.chan .badge {
+  float: right;
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+}

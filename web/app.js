@@ -1,5 +1,8 @@
-// Cliente M4: reconexión automática con backoff, sesión persistente por
-// pestaña, separadores de día y autoscroll que no te interrumpe.
+// Cliente M5: chat + canales de voz por WebRTC en malla.
+//
+// El audio NO pasa por el servidor: cada par abre un RTCPeerConnection
+// directo con cada otro par. El servidor solo rutea los mensajes
+// "signal" para que los navegadores se encuentren.
 
 const $ = (id) => document.getElementById(id);
 const joinView = $("join"), chatView = $("chat");
@@ -9,6 +12,9 @@ const chanForm = $("chan-form"), chanInput = $("chan");
 const log = $("log"), onlineList = $("online"), channelList = $("channels");
 const statusEl = $("status"), retryBtn = $("retry"), jumpBtn = $("jump");
 const channelTitle = $("channel-title");
+const voiceTitle = $("voice-title"), voiceMembers = $("voice-members");
+const voiceElsewhere = $("voice-elsewhere");
+const voiceBtn = $("voice-btn"), muteBtn = $("mute-btn");
 
 // sessionStorage y no localStorage: es por pestaña, así puedes abrir dos
 // pestañas con nicks distintos (y F5 no te saca del chat).
@@ -26,6 +32,21 @@ let retryTimer = null, countdownTimer = null, stableTimer = null;
 
 let unread = 0;              // mensajes llegados mientras leías más arriba
 let lastDay = null, lastAuthor = null, lastTime = 0;
+
+// --- estado de voz ---
+// Servidores STUN: le dicen a tu navegador cuál es su IP pública para
+// que el otro par sepa dónde encontrarlo. En la misma LAN no hacen
+// falta; detrás de un NAT estricto (típico de una red universitaria)
+// puede que ni con esto alcance y necesites un TURN.
+const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+let localStream = null;      // tu micrófono
+let wantVoice = false;       // querías estar en voz (sobrevive reconexiones)
+let voiceChannel = null;     // canal de voz confirmado por el servidor
+let muted = false;
+let voiceState = {};         // canal → [nicks en voz]
+const peers = new Map();     // nick → { pc, pending, audio, stopMeter }
+const speaking = new Map();  // nick → bool
 
 // --- sesión ---
 
@@ -68,7 +89,13 @@ function connect() {
     ws = null;
     authed = false;
     clearTimeout(stableTimer);
+    // Los RTCPeerConnection sobreviven a la caída del WebSocket, pero
+    // el servidor ya nos dio de baja de la voz. Los cerramos para
+    // rearmarlos limpios al reconectar.
+    closeAllPeers();
+    voiceChannel = null;
     updateComposer();
+    renderVoice();
 
     // 1008: el servidor le entregó el nick a otra conexión con nuestro
     // mismo token. Reintentar solo provocaría una pelea infinita.
@@ -137,11 +164,15 @@ function onMessage(ev) {
       channels = d.channels;
       session = { nick: d.nick, token: d.session, channel: d.channel };
       saveSession();
+      voiceState = d.voice ?? {};
       joinView.hidden = true;
       chatView.hidden = false;
       setChannel(d.channel);
       renderOnline(d.online);
       updateComposer();
+      // Si estabas en voz y se cayó el socket, vuelves a entrar: los
+      // peers se rearman desde cero.
+      if (wantVoice) send("voice_join");
       msgInput.focus();
       break;
 
@@ -167,6 +198,25 @@ function onMessage(ev) {
     case "channel_joined":
       setChannel(d.name);
       if (session) { session.channel = d.name; saveSession(); }
+      break;
+
+    case "voice_state":
+      if (d.members.length) voiceState[d.channel] = d.members;
+      else delete voiceState[d.channel];
+
+      if (d.members.includes(myNick)) {
+        voiceChannel = d.channel;
+        syncPeers(d.members);
+      } else if (voiceChannel === d.channel) {
+        voiceChannel = null;   // te sacaron (o te cambiaste de canal)
+        closeAllPeers();
+      }
+      renderVoice();
+      renderChannels();
+      break;
+
+    case "signal":
+      onSignal(d);
       break;
 
     case "user_joined":
@@ -236,6 +286,7 @@ function setChannel(name) {
   channelTitle.textContent = `# ${name}`;
   clearLog(); // el history llega enseguida y pinta el contenido
   renderChannels();
+  renderVoice();
   updateComposer();
 }
 
@@ -244,6 +295,7 @@ function updateComposer() {
   msgInput.disabled = !live;
   msgBtn.disabled = !live;
   chanInput.disabled = !live;
+  voiceBtn.disabled = !live;
   msgInput.placeholder = live ? `Mensaje a # ${currentChannel}` : "sin conexión…";
 }
 
@@ -254,6 +306,14 @@ function renderChannels() {
     btn.type = "button";
     btn.textContent = `# ${name}`;
     btn.className = name === currentChannel ? "chan current" : "chan";
+    const inVoice = voiceState[name]?.length ?? 0;
+    if (inVoice) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = inVoice;
+      badge.title = `${inVoice} en voz`;
+      btn.appendChild(badge);
+    }
     btn.addEventListener("click", () => {
       if (name !== currentChannel) send("join_channel", { name });
     });
@@ -268,6 +328,228 @@ function renderOnline(nicks) {
     li.textContent = n + (n === myNick ? " (tú)" : "");
     return li;
   }));
+}
+
+// --- voz (webrtc) ---
+
+voiceBtn.addEventListener("click", () => {
+  if (voiceChannel && voiceChannel === currentChannel) leaveVoice();
+  else joinVoice();
+});
+muteBtn.addEventListener("click", toggleMute);
+
+async function joinVoice() {
+  if (!authed) return;
+  if (!localStream) {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+    } catch (err) {
+      system(`no pude abrir el micrófono: ${err.name}`);
+      return;
+    }
+    watchLevel(myNick, localStream);
+  }
+  wantVoice = true;
+  send("voice_join");
+  renderVoice();
+}
+
+function leaveVoice() {
+  wantVoice = false;
+  voiceChannel = null;
+  send("voice_leave");
+  closeAllPeers();
+  if (localStream) {
+    localStream.getTracks().forEach((t) => t.stop());
+    localStream = null;
+  }
+  stopMeter(myNick);
+  muted = false;
+  renderVoice();
+}
+
+function toggleMute() {
+  const track = localStream?.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  muted = !track.enabled;
+  if (muted) speaking.set(myNick, false);
+  renderVoice();
+}
+
+const sendSignal = (to, payload) => send("signal", { to, payload });
+
+// syncPeers deja abierta exactamente una conexión por participante.
+//
+// Regla para no chocar: de cada par, ofrece el nick menor. Si ambos
+// ofrecieran a la vez las dos ofertas se pisarían (eso se llama glare)
+// y habría que negociar quién cede. Comparar strings evita el problema
+// entero y no necesita estado.
+function syncPeers(members) {
+  if (!localStream) return; // sin micrófono no hay nada que negociar
+  const others = members.filter((n) => n !== myNick);
+
+  for (const nick of others) {
+    if (peers.has(nick)) continue;
+    const peer = createPeer(nick);
+    if (myNick < nick) makeOffer(nick, peer);
+  }
+  for (const nick of [...peers.keys()]) {
+    if (!others.includes(nick)) closePeer(nick);
+  }
+}
+
+function createPeer(nick) {
+  const pc = new RTCPeerConnection(rtcConfig);
+  const peer = { pc, pending: [], audio: null };
+  peers.set(nick, peer);
+
+  for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
+
+  pc.addEventListener("icecandidate", (ev) => {
+    if (ev.candidate) sendSignal(nick, { candidate: ev.candidate });
+  });
+
+  pc.addEventListener("track", (ev) => {
+    const stream = ev.streams[0];
+    peer.audio = new Audio();      // hay que guardarlo: si lo recolecta el GC, se corta
+    peer.audio.srcObject = stream;
+    peer.audio.autoplay = true;
+    peer.audio.play().catch(() => system(`no pude reproducir a ${nick}`));
+    watchLevel(nick, stream);
+  });
+
+  pc.addEventListener("connectionstatechange", () => {
+    if (pc.connectionState === "failed") {
+      system(`se cayó la conexión de voz con ${nick} (¿NAT estricto? haría falta un TURN)`);
+    }
+  });
+
+  return peer;
+}
+
+async function makeOffer(nick, peer) {
+  try {
+    await peer.pc.setLocalDescription(await peer.pc.createOffer());
+    sendSignal(nick, { desc: peer.pc.localDescription });
+  } catch (err) {
+    system(`error negociando con ${nick}: ${err.message}`);
+  }
+}
+
+async function onSignal({ from, payload }) {
+  if (!localStream || !voiceChannel) return;
+  const peer = peers.get(from) ?? createPeer(from);
+  const pc = peer.pc;
+
+  try {
+    if (payload.desc) {
+      await pc.setRemoteDescription(payload.desc);
+      // Los candidatos que llegaron antes de la descripción remota no
+      // se podían agregar todavía; ahora sí.
+      for (const cand of peer.pending.splice(0)) {
+        await pc.addIceCandidate(cand).catch(() => {});
+      }
+      if (payload.desc.type === "offer") {
+        await pc.setLocalDescription(await pc.createAnswer());
+        sendSignal(from, { desc: pc.localDescription });
+      }
+    } else if (payload.candidate) {
+      if (pc.remoteDescription) await pc.addIceCandidate(payload.candidate);
+      else peer.pending.push(payload.candidate);
+    }
+  } catch (err) {
+    system(`error de señalización con ${from}: ${err.message}`);
+  }
+}
+
+function closePeer(nick) {
+  const peer = peers.get(nick);
+  if (!peer) return;
+  peer.pc.close();
+  if (peer.audio) peer.audio.srcObject = null;
+  peers.delete(nick);
+  stopMeter(nick);
+}
+
+function closeAllPeers() {
+  for (const nick of [...peers.keys()]) closePeer(nick);
+}
+
+// --- detector de voz (el puntito que se enciende) ---
+
+let audioCtx = null;
+const meters = new Map(); // nick → función para desmontar el análisis
+
+// watchLevel mide el volumen del stream y prende el indicador cuando
+// pasa un umbral. Es puro Web Audio: nada de esto viaja por la red.
+function watchLevel(nick, stream) {
+  stopMeter(nick);
+  audioCtx ??= new AudioContext();
+  const source = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+
+  const samples = new Uint8Array(analyser.fftSize);
+  let frame = 0;
+
+  const tick = () => {
+    analyser.getByteTimeDomainData(samples);
+    let sum = 0;
+    for (const v of samples) {
+      const x = (v - 128) / 128; // centrado en 0
+      sum += x * x;
+    }
+    const rms = Math.sqrt(sum / samples.length);
+    const isSpeaking = rms > 0.02 && !(nick === myNick && muted);
+    if (speaking.get(nick) !== isSpeaking) {
+      speaking.set(nick, isSpeaking);
+      renderVoice();
+    }
+    frame = requestAnimationFrame(tick);
+  };
+  tick();
+
+  meters.set(nick, () => {
+    cancelAnimationFrame(frame);
+    source.disconnect();
+    speaking.delete(nick);
+  });
+}
+
+function stopMeter(nick) {
+  meters.get(nick)?.();
+  meters.delete(nick);
+}
+
+function renderVoice() {
+  const shown = voiceChannel ?? currentChannel;
+  const members = voiceState[shown] ?? [];
+
+  voiceTitle.textContent = shown ? `Voz — # ${shown}` : "Voz";
+  voiceMembers.replaceChildren(...members.map((nick) => {
+    const li = document.createElement("li");
+    li.className = "voice-member"
+      + (speaking.get(nick) ? " speaking" : "")
+      + (nick === myNick && muted ? " muted" : "");
+    li.textContent = nick + (nick === myNick ? " (tú)" : "");
+    return li;
+  }));
+
+  const elsewhere = voiceChannel && voiceChannel !== currentChannel;
+  voiceElsewhere.hidden = !elsewhere;
+  if (elsewhere) voiceElsewhere.textContent = `sigues en voz en # ${voiceChannel}`;
+
+  const here = voiceChannel === currentChannel;
+  voiceBtn.textContent = here ? "Salir de voz" : elsewhere ? "Mover voz aquí" : "Entrar a voz";
+  voiceBtn.className = here ? "leave" : "";
+  voiceBtn.disabled = !authed;
+  muteBtn.hidden = !voiceChannel;
+  muteBtn.textContent = muted ? "Activar micrófono" : "Silenciar";
 }
 
 // --- log ---

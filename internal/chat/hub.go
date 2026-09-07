@@ -26,6 +26,11 @@ const (
 	maxContentLen  = 2000
 	defaultChannel = "general"
 	historyLimit   = 50
+
+	// La malla p2p hace que cada participante mantenga N-1 conexiones
+	// y suba su audio N-1 veces. Pasado este número hay que migrar a un
+	// SFU; mejor fallar claro que sonar pésimo.
+	maxVoiceMembers = 6
 )
 
 // Los nombres de canal se normalizan a minúsculas con guiones,
@@ -48,6 +53,7 @@ type Hub struct {
 	clients  map[*Client]bool
 	nicks    map[string]*Client
 	channels map[string]bool
+	voice    map[string]map[*Client]bool // canal → quiénes están en voz
 	store    *store.Store
 }
 
@@ -63,6 +69,7 @@ func NewHub(st *store.Store, channelNames []string) *Hub {
 		inbound:    make(chan inbound),
 		clients:    make(map[*Client]bool),
 		nicks:      make(map[string]*Client),
+		voice:      make(map[string]map[*Client]bool),
 		channels:   channels,
 		store:      st,
 	}
@@ -95,6 +102,7 @@ func (h *Hub) drop(c *Client, announce bool) {
 		return
 	}
 	delete(h.nicks, c.nick)
+	h.voiceLeave(c, announce)
 	if announce {
 		// !announce = la conexión se está reemplazando por una nueva
 		// (reconexión); para los demás el usuario nunca se fue.
@@ -130,6 +138,18 @@ func (h *Hub) handle(c *Client, env protocol.Envelope) {
 		var req protocol.CreateChannel
 		if decode(c, env, &req) {
 			h.createChannel(c, req.Name)
+		}
+
+	case "voice_join":
+		h.voiceJoin(c)
+
+	case "voice_leave":
+		h.voiceLeave(c, true)
+
+	case "signal":
+		var req protocol.Signal
+		if decode(c, env, &req) {
+			h.signal(c, req)
 		}
 
 	default:
@@ -190,6 +210,7 @@ func (h *Hub) setNick(c *Client, req protocol.SetNick) {
 		Online:   h.online(),
 		Channels: h.channelNames(),
 		Channel:  c.channel,
+		Voice:    h.voiceStates(),
 	}))
 	h.sendHistory(c)
 
@@ -282,6 +303,103 @@ func (h *Hub) createChannel(c *Client, name string) {
 	c.channel = name
 	c.trySend(protocol.Marshal("channel_joined", protocol.ChannelJoined{Name: name}))
 	h.sendHistory(c)
+}
+
+// --- voz ---
+//
+// El hub no toca el audio: solo lleva la cuenta de quién está en cada
+// canal de voz y rutea los mensajes de señalización. El audio viaja
+// directo entre navegadores por WebRTC.
+
+// voiceJoin mete al cliente al canal de voz del canal que está mirando.
+// Si ya estaba en otro canal de voz, se cambia.
+func (h *Hub) voiceJoin(c *Client) {
+	if c.nick == "" {
+		c.sendError("no_nick", "elige un nick antes de entrar a voz")
+		return
+	}
+	target := c.channel
+	if c.voiceChannel == target {
+		return // ya estás ahí
+	}
+	if len(h.voice[target]) >= maxVoiceMembers {
+		c.sendError("voice_full", "el canal de voz está lleno (máx. 6 en malla p2p)")
+		return
+	}
+
+	h.voiceLeave(c, true)
+	if h.voice[target] == nil {
+		h.voice[target] = make(map[*Client]bool)
+	}
+	h.voice[target][c] = true
+	c.voiceChannel = target
+	log.Printf("chat: %q entró a la voz de #%s (%d en voz)", c.nick, target, len(h.voice[target]))
+	h.broadcastVoice(target)
+}
+
+// voiceLeave saca al cliente de su canal de voz, si estaba en alguno.
+func (h *Hub) voiceLeave(c *Client, announce bool) {
+	ch := c.voiceChannel
+	if ch == "" {
+		return
+	}
+	delete(h.voice[ch], c)
+	if len(h.voice[ch]) == 0 {
+		delete(h.voice, ch)
+	}
+	c.voiceChannel = ""
+	log.Printf("chat: %q salió de la voz de #%s", c.nick, ch)
+	if announce {
+		h.broadcastVoice(ch)
+	}
+}
+
+// signal reenvía un mensaje de negociación WebRTC al destinatario, sin
+// mirar su contenido. Solo verifica que ambos estén en el mismo canal
+// de voz: así nadie puede usar el servidor para mandarle paquetes a
+// alguien que no está en la conversación.
+func (h *Hub) signal(c *Client, req protocol.Signal) {
+	if c.voiceChannel == "" {
+		c.sendError("not_in_voice", "no estás en un canal de voz")
+		return
+	}
+	dst := h.nicks[req.To]
+	if dst == nil || dst.voiceChannel != c.voiceChannel {
+		c.sendError("no_peer", "ese usuario no está en tu canal de voz")
+		return
+	}
+	dst.trySend(protocol.Marshal("signal", protocol.Signal{
+		From:    c.nick,
+		Payload: req.Payload,
+	}))
+}
+
+// broadcastVoice avisa a todos cómo quedó el canal de voz.
+func (h *Hub) broadcastVoice(channel string) {
+	h.broadcast(protocol.Marshal("voice_state", protocol.VoiceState{
+		Channel: channel,
+		Members: h.voiceMembers(channel),
+	}), "")
+}
+
+// voiceMembers devuelve los nicks en voz de un canal, ordenados.
+func (h *Hub) voiceMembers(channel string) []string {
+	out := make([]string, 0, len(h.voice[channel]))
+	for c := range h.voice[channel] {
+		out = append(out, c.nick)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// voiceStates arma el mapa completo canal → participantes, para el
+// estado inicial que va en nick_ok.
+func (h *Hub) voiceStates() map[string][]string {
+	out := make(map[string][]string, len(h.voice))
+	for ch := range h.voice {
+		out[ch] = h.voiceMembers(ch)
+	}
+	return out
 }
 
 // sendHistory manda al cliente los últimos mensajes de su canal actual.
