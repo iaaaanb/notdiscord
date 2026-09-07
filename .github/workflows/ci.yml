@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "estos archivos necesitan gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race porque el hub es concurrente por diseño: si una goroutine
+      # empieza a tocar su estado, esto lo pilla.
+      - name: go test -race
+        run: go test -race ./...
+
+      # Mismo build que usa deploy/deploy.sh: sin cgo, un solo binario.
+      - name: build estático
+        env:
+          CGO_ENABLED: "0"
+        run: go build -ldflags="-s -w" -o /dev/null ./cmd/server
