@@ -7,11 +7,15 @@
 package chat
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/coder/websocket"
 
 	"github.com/iaaaanb/notdiscord/internal/protocol"
 	"github.com/iaaaanb/notdiscord/internal/store"
@@ -91,8 +95,10 @@ func (h *Hub) drop(c *Client, announce bool) {
 		return
 	}
 	delete(h.nicks, c.nick)
-	log.Printf("chat: %q salió (%d online)", c.nick, len(h.nicks))
 	if announce {
+		// !announce = la conexión se está reemplazando por una nueva
+		// (reconexión); para los demás el usuario nunca se fue.
+		log.Printf("chat: %q salió (%d online)", c.nick, len(h.nicks))
 		h.broadcast(protocol.Marshal("user_left", protocol.Presence{
 			Nick:   c.nick,
 			Online: h.online(),
@@ -105,7 +111,7 @@ func (h *Hub) handle(c *Client, env protocol.Envelope) {
 	case "set_nick":
 		var req protocol.SetNick
 		if decode(c, env, &req) {
-			h.setNick(c, req.Nick)
+			h.setNick(c, req)
 		}
 
 	case "send_message":
@@ -131,8 +137,8 @@ func (h *Hub) handle(c *Client, env protocol.Envelope) {
 	}
 }
 
-func (h *Hub) setNick(c *Client, nick string) {
-	nick = strings.TrimSpace(nick)
+func (h *Hub) setNick(c *Client, req protocol.SetNick) {
+	nick := strings.TrimSpace(req.Nick)
 	switch {
 	case c.nick != "":
 		c.sendError("already_set", "ya tienes un nick en esta conexión")
@@ -140,27 +146,73 @@ func (h *Hub) setNick(c *Client, nick string) {
 	case nick == "" || utf8.RuneCountInString(nick) > maxNickLen:
 		c.sendError("bad_nick", "el nick debe tener entre 1 y 32 caracteres")
 		return
-	case h.nicks[nick] != nil:
-		c.sendError("nick_taken", "ese nick ya está en uso")
-		return
+	}
+
+	// Si el nick está ocupado hay dos casos muy distintos: otra persona
+	// lo tomó (error), o es este mismo cliente reconectando y el
+	// servidor todavía no se entera de que la conexión vieja murió. El
+	// token de sesión los distingue.
+	reclaimed := false
+	if old := h.nicks[nick]; old != nil {
+		if req.Session == "" || old.session != req.Session {
+			c.sendError("nick_taken", "ese nick ya está en uso")
+			return
+		}
+		old.kick(websocket.StatusPolicyViolation, "sesión reclamada por otra conexión")
+		h.drop(old, false) // sin anunciar salida: para los demás nunca se fue
+		reclaimed = true
 	}
 
 	c.nick = nick
+	c.session = req.Session
+	if !reclaimed || c.session == "" {
+		c.session = newSession()
+	}
+
+	// Al reconectar volvemos al canal donde estabas, si todavía existe.
 	c.channel = defaultChannel
+	if req.Channel != "" {
+		if name := NormalizeChannel(req.Channel); h.channels[name] {
+			c.channel = name
+		}
+	}
 	h.nicks[nick] = c
-	log.Printf("chat: %q entró (%d online)", nick, len(h.nicks))
+
+	if reclaimed {
+		log.Printf("chat: %q reconectó a #%s (%d online)", nick, c.channel, len(h.nicks))
+	} else {
+		log.Printf("chat: %q entró (%d online)", nick, len(h.nicks))
+	}
 
 	c.trySend(protocol.Marshal("nick_ok", protocol.NickOK{
 		Nick:     nick,
+		Session:  c.session,
 		Online:   h.online(),
 		Channels: h.channelNames(),
 		Channel:  c.channel,
 	}))
 	h.sendHistory(c)
-	h.broadcast(protocol.Marshal("user_joined", protocol.Presence{
-		Nick:   nick,
-		Online: h.online(),
-	}), "")
+
+	// Tras un reclamo la lista online no cambió, así que no hay nada
+	// que anunciar (y evitamos el "fulano entró" cada vez que a alguien
+	// se le cae el wifi un segundo).
+	if !reclaimed {
+		h.broadcast(protocol.Marshal("user_joined", protocol.Presence{
+			Nick:   nick,
+			Online: h.online(),
+		}), "")
+	}
+}
+
+// newSession genera el token opaco con el que un cliente puede reclamar
+// su nick al reconectar. Solo vive en memoria: si reinicias el servidor
+// se pierden todos, pero también se pierden los nicks, así que da igual.
+func newSession() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("chat: sin entropía para el token de sesión: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func (h *Hub) message(c *Client, content string) {

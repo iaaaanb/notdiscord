@@ -112,3 +112,47 @@ button {
 
 main header { padding: 12px 16px; border-bottom: 1px solid var(--line); }
 main header h2 { margin: 0; font-size: 1rem; }
+
+/* --- M4: reconexión y pulido --- */
+.status-row { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.status[data-state="connecting"] { color: var(--muted); }
+.status[data-state="open"] { color: var(--accent); }
+
+/* botón que parece link, para "reintentar" */
+.linkish {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font-size: 0.8rem;
+  text-decoration: underline;
+}
+
+.log-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+#log { flex: 1; }
+
+.jump {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+}
+
+/* separador de día */
+.day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* mensajes consecutivos del mismo autor: sin cabecera y más juntos */
+.msg.grouped { margin-top: -6px; }
+.msg .body { overflow-wrap: anywhere; }
+
+input:disabled, button:disabled { opacity: 0.5; cursor: not-allowed; }

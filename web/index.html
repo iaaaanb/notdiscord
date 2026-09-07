@@ -29,14 +29,20 @@
       </form>
       <p class="hint">Online</p>
       <ul id="online"></ul>
-      <span id="status" class="status" data-state="open">conectado</span>
+      <p class="status-row">
+        <span id="status" class="status" data-state="connecting">conectando…</span>
+        <button id="retry" type="button" class="linkish" hidden>reintentar</button>
+      </p>
     </aside>
     <main>
       <header><h2 id="channel-title"># general</h2></header>
-      <ul id="log" aria-live="polite"></ul>
+      <div class="log-wrap">
+        <ul id="log" aria-live="polite"></ul>
+        <button id="jump" type="button" class="jump" hidden></button>
+      </div>
       <form id="msg-form">
         <input id="msg" type="text" maxlength="2000" placeholder="Mensaje" autocomplete="off">
-        <button type="submit">Enviar</button>
+        <button id="msg-send" type="submit">Enviar</button>
       </form>
     </main>
   </div>

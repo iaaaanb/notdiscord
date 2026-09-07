@@ -3,7 +3,7 @@
 // Todo mensaje es un Envelope: {"type": "...", "data": {...}}.
 //
 // Cliente → servidor: set_nick, send_message, join_channel, create_channel
-// Servidor → cliente: nick_ok, message, user_joined, user_left,
+// Servidor → cliente: nick_ok, message, history, user_joined, user_left,
 //
 //	channel_list, channel_joined, error
 package protocol
@@ -37,8 +37,16 @@ func Marshal(typ string, data any) []byte {
 // --- cliente → servidor ---
 
 // SetNick pide registrar un apodo para esta conexión.
+//
+// M4: Session y Channel son opcionales y sirven para reconectar. Si el
+// nick está ocupado pero Session coincide con el de la conexión que lo
+// tiene, el servidor asume que es el mismo cliente volviendo tras una
+// caída de red y le transfiere el nick (echando a la conexión vieja).
+// Channel permite volver al canal donde estabas sin un round-trip extra.
 type SetNick struct {
-	Nick string `json:"nick"`
+	Nick    string `json:"nick"`
+	Session string `json:"session,omitempty"`
+	Channel string `json:"channel,omitempty"`
 }
 
 // SendMessage envía un mensaje al canal en el que está el cliente.
@@ -60,8 +68,10 @@ type CreateChannel struct {
 
 // NickOK confirma el registro del nick. Incluye el estado inicial:
 // quiénes están online, qué canales existen y en cuál quedaste.
+// Session es el token que el cliente debe guardar para reconectar.
 type NickOK struct {
 	Nick     string   `json:"nick"`
+	Session  string   `json:"session"`
 	Online   []string `json:"online"`
 	Channels []string `json:"channels"`
 	Channel  string   `json:"channel"`
